@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Trabalho Final CG – Braço Robótico</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0a0c12;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script>
+// =============================================================================
+// ESTADO GERAL
+// =============================================================================
+
+let braco = {
+  origem: [40, 610],
+  L1: 200, L2: 150, L3: 80,
+  theta1: -Math.PI / 2,
+  theta2: Math.PI * 0.85,
+  theta3: -Math.PI * 0.75,
+  vida: 100,
+  selecionada: 0,
+  ultimo_dano: -100,
+  direcao_rot: 1
+};
+
+let nucleo = { x: 0, y: 0, r: 25 };
+
+let robo_obj = {
+  x: 300, y: 350, r: 12,
+  angulo: 0, vel: 1.2,
+  timer: 0, intervalo: 60
+};
+
+let obstaculos = [];
+let particulas = [];
+let estado_jogo = 'JOGANDO';
+
+// =============================================================================
+// GERAÇÃO PROCEDURAL
+// =============================================================================
+
+function gerar_labirinto() {
+  obstaculos = [];
+  particulas = [];
+  estado_jogo = 'JOGANDO';
+
+  let opcoes_spawn = [
+    { origem: [40,  610], theta1: -PI / 4,       nx: [490,590], ny: [140,220], direcao_rot:  1 },
+    { origem: [40,  120], theta1:  PI / 4,        nx: [490,590], ny: [490,580], direcao_rot:  1 },
+    { origem: [610, 120], theta1:  PI * 3 / 4,   nx: [60, 160], ny: [490,580], direcao_rot: -1 },
+    { origem: [610, 610], theta1: -PI * 3 / 4,   nx: [60, 160], ny: [140,220], direcao_rot: -1 },
+  ];
+  let spawn = random(opcoes_spawn);
+
+  braco.origem      = spawn.origem.slice();
+  braco.theta1      = spawn.theta1;
+  braco.direcao_rot = spawn.direcao_rot;
+  braco.theta2      = PI * 0.85;
+  braco.theta3      = -PI * 0.75;
+  braco.L1 = 100; braco.L2 = 80; braco.L3 = 50;
+  braco.vida        = 100;
+  braco.ultimo_dano = -100;
+  braco.selecionada = 0;
+
+  nucleo.x = random(spawn.nx[0], spawn.nx[1]);
+  nucleo.y = random(spawn.ny[0], spawn.ny[1]);
+
+  let tipos = ['retangulo', 'circulo', 'losango'];
+  let cores = [
+    { cor: [255,  50,  50], dano: 20 },
+    { cor: [255, 120,   0], dano: 10 },
+    { cor: [255, 220,   0], dano:  5 },
+  ];
+
+  let tentativas = 0;
+  while (obstaculos.length < 16 && tentativas < 800) {
+    tentativas++;
+    let tipo = random(tipos);
+    let w, h;
+    if (tipo === 'circulo') { w = random(30, 80); h = w; }
+    else { w = random(30, 120); h = random(30, 120); }
+
+    let cx = random(40 + w/2, 610 - w/2);
+    let cy = random(120 + h/2, 610 - h/2);
+
+    if (dist(cx, cy, braco.origem[0], braco.origem[1]) < 180 + max(w,h)/2) continue;
+    if (dist(cx, cy, nucleo.x, nucleo.y) < nucleo.r + 60 + max(w,h)/2)    continue;
+
+    let sobreposicao = false;
+    for (let obs of obstaculos) {
+      if (abs(cx - obs.cx) < (w + obs.w)/2 + 50 &&
+          abs(cy - obs.cy) < (h + obs.h)/2 + 50) {
+        sobreposicao = true; break;
+      }
+    }
+    if (!sobreposicao) {
+      let escolha = random(cores);
+      obstaculos.push({ cx, cy, w, h, tipo, cor: escolha.cor, dano: escolha.dano });
+    }
+  }
+
+  iniciar_robo();
+}
+
+// =============================================================================
+// ROBÔ INIMIGO
+// =============================================================================
+
+function robo_colide_obs(nx, ny) {
+  let r = robo_obj.r;
+  if (nx < 20+r || nx > 630-r || ny < 100+r || ny > 630-r) return true;
+  for (let obs of obstaculos) {
+    let { w, h, cx, cy } = obs;
+    if (obs.tipo === 'retangulo') {
+      if (cx-w/2-r < nx && nx < cx+w/2+r && cy-h/2-r < ny && ny < cy+h/2+r) return true;
+    } else if (obs.tipo === 'circulo') {
+      if (dist(nx, ny, cx, cy) < w/2+r) return true;
+    } else if (obs.tipo === 'losango') {
+      if (abs(nx-cx)/(w/2+r) + abs(ny-cy)/(h/2+r) < 1) return true;
+    }
+  }
+  return false;
+}
+
+function robo_colide_braco(nx, ny, juntas) {
+  let espessuras = [12, 8, 4];
+  for (let s = 0; s < 3; s++) {
+    let d = dist_ponto_segmento(nx, ny,
+      juntas[s][0], juntas[s][1], juntas[s+1][0], juntas[s+1][1]);
+    if (d < robo_obj.r + espessuras[s]/2 + 3) return true;
+  }
+  return false;
+}
+
+function iniciar_robo() {
+  for (let i = 0; i < 500; i++) {
+    let nx = random(60, 590);
+    let ny = random(140, 610);
+    if (dist(nx, ny, braco.origem[0], braco.origem[1]) < 160) continue;
+    if (dist(nx, ny, nucleo.x, nucleo.y) < 80) continue;
+    if (!robo_colide_obs(nx, ny)) {
+      robo_obj.x        = nx;
+      robo_obj.y        = ny;
+      robo_obj.angulo   = random(0, TWO_PI);
+      robo_obj.timer    = 0;
+      robo_obj.intervalo = floor(random(40, 101));
+      break;
+    }
+  }
+}
+
+function atualizar_robo(juntas, em_movimento) {
+  if (estado_jogo !== 'JOGANDO') return;
+
+  robo_obj.timer++;
+  if (robo_obj.timer >= robo_obj.intervalo) {
+    robo_obj.angulo    = random(0, TWO_PI);
+    robo_obj.timer     = 0;
+    robo_obj.intervalo = floor(random(40, 101));
+  }
+
+  let nx = robo_obj.x + cos(robo_obj.angulo) * robo_obj.vel;
+  let ny = robo_obj.y + sin(robo_obj.angulo) * robo_obj.vel;
+
+  function colide(px, py) {
+    if (robo_colide_obs(px, py)) return true;
+    if (!em_movimento && robo_colide_braco(px, py, juntas)) return true;
+    return false;
+  }
+
+  if (colide(nx, ny)) {
+    for (let i = 0; i < 12; i++) {
+      robo_obj.angulo = random(0, TWO_PI);
+      nx = robo_obj.x + cos(robo_obj.angulo) * robo_obj.vel;
+      ny = robo_obj.y + sin(robo_obj.angulo) * robo_obj.vel;
+      if (!colide(nx, ny)) {
+        robo_obj.x = nx; robo_obj.y = ny; robo_obj.timer = 0; break;
+      }
+    }
+  } else {
+    robo_obj.x = nx; robo_obj.y = ny;
+  }
+
+  if (em_movimento) {
+    let espessuras = [12, 8, 4];
+    for (let s = 0; s < 3; s++) {
+      let d = dist_ponto_segmento(
+        robo_obj.x, robo_obj.y,
+        juntas[s][0], juntas[s][1], juntas[s+1][0], juntas[s+1][1]);
+      if (d < robo_obj.r + espessuras[s]/2) {
+        emitir_particulas_robo(robo_obj.x, robo_obj.y);
+        braco.vida  = 0;
+        estado_jogo = 'GAME_OVER';
+        return;
+      }
+    }
+  }
+}
+
+function desenhar_robo() {
+  let x = robo_obj.x, y = robo_obj.y, r = robo_obj.r;
+  push();
+  translate(x, y);
+
+  noStroke(); fill(50, 255, 50, 35);
+  circle(0, 0, r * 3.5);
+
+  fill(20, 160, 20); stroke(80, 255, 80); strokeWeight(2);
+  circle(0, 0, r * 2);
+
+  noStroke(); fill(255);
+  circle(-r*0.32, -r*0.1, r*0.55);
+  circle( r*0.32, -r*0.1, r*0.55);
+  fill(10, 10, 10);
+  circle(-r*0.32, -r*0.1, r*0.28);
+  circle( r*0.32, -r*0.1, r*0.28);
+
+  stroke(80, 255, 80); strokeWeight(1.5);
+  line(0, -r, 0, -r*1.9);
+  noStroke(); fill(255, 240, 0);
+  circle(0, -r*2.0, r*0.38);
+
+  pop();
+}
+
+// =============================================================================
+// SISTEMA DE PARTÍCULAS
+// =============================================================================
+
+function emitir_particulas(x, y, cor, quantidade = 16) {
+  for (let i = 0; i < quantidade; i++) {
+    let ang = random(0, TWO_PI);
+    let vel = random(1.5, 5.0);
+    let vida = floor(random(25, 51));
+    particulas.push({
+      x, y,
+      vx: cos(ang)*vel, vy: sin(ang)*vel,
+      vida, vida_max: vida,
+      tamanho: random(3, 8), cor
+    });
+  }
+}
+
+function emitir_particulas_nucleo(x, y) {
+  let cores = [[0,255,255],[255,255,255],[0,200,255],[100,255,255],[0,255,200]];
+  for (let i = 0; i < 120; i++) {
+    let ang = random(0, TWO_PI), vel = random(2.0, 14.0);
+    let vida = floor(random(50, 101));
+    particulas.push({
+      x, y, vx: cos(ang)*vel, vy: sin(ang)*vel,
+      vida, vida_max: vida, tamanho: random(6, 22), cor: random(cores)
+    });
+  }
+}
+
+function emitir_particulas_robo(x, y) {
+  let cores = [[50,255,50],[100,255,100],[180,255,180],[255,255,255],[0,200,0]];
+  for (let i = 0; i < 120; i++) {
+    let ang = random(0, TWO_PI), vel = random(2.0, 14.0);
+    let vida = floor(random(50, 101));
+    particulas.push({
+      x, y, vx: cos(ang)*vel, vy: sin(ang)*vel,
+      vida, vida_max: vida, tamanho: random(6, 22), cor: random(cores)
+    });
+  }
+}
+
+function atualizar_particulas() {
+  for (let i = particulas.length - 1; i >= 0; i--) {
+    let p = particulas[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.90; p.vy *= 0.90;
+    p.vida--;
+    if (p.vida <= 0) particulas.splice(i, 1);
+  }
+}
+
+function desenhar_particulas() {
+  noStroke();
+  for (let p of particulas) {
+    let prog = p.vida / p.vida_max;
+    let [r, g, b] = p.cor;
+    fill(r, g, b, int(255 * prog));
+    circle(p.x, p.y, p.tamanho * prog);
+  }
+}
+
+// =============================================================================
+// LABIRINTO
+// =============================================================================
+
+function desenhar_forma(tipo, w, h) {
+  if      (tipo === 'retangulo') { rect(-w/2, -h/2, w, h); }
+  else if (tipo === 'circulo')   { circle(0, 0, w); }
+  else if (tipo === 'losango')   {
+    beginShape();
+    vertex(0, -h/2); vertex(w/2, 0); vertex(0, h/2); vertex(-w/2, 0);
+    endShape(CLOSE);
+  }
+}
+
+function desenhar_bordas_labirinto() {
+  rect(0,   80, 650,  20);
+  rect(0,  630, 650,  20);
+  rect(0,   80,  20, 570);
+  rect(630,  80,  20, 570);
+}
+
+function dist_ponto_segmento(px, py, ax, ay, bx, by) {
+  let dx = bx-ax, dy = by-ay;
+  if (dx === 0 && dy === 0) return dist(px, py, ax, ay);
+  let t = Math.max(0, Math.min(1, ((px-ax)*dx + (py-ay)*dy) / (dx*dx + dy*dy)));
+  return dist(px, py, ax + t*dx, ay + t*dy);
+}
+
+function desenhar_labirinto(juntas) {
+  fill(12, 16, 22);
+  stroke(150, 50, 255, 80); strokeWeight(10);
+  desenhar_bordas_labirinto();
+  noFill();
+  stroke(180, 80, 255); strokeWeight(2);
+  desenhar_bordas_labirinto();
+
+  for (let obs of obstaculos) {
+    push();
+    translate(obs.cx, obs.cy);
+    let { w, h, tipo, cx, cy } = obs;
+
+    let d = Math.min(
+      dist_ponto_segmento(cx, cy, juntas[0][0], juntas[0][1], juntas[1][0], juntas[1][1]),
+      dist_ponto_segmento(cx, cy, juntas[1][0], juntas[1][1], juntas[2][0], juntas[2][1]),
+      dist_ponto_segmento(cx, cy, juntas[2][0], juntas[2][1], juntas[3][0], juntas[3][1])
+    );
+
+    let freq = d < 150 ? 0.30 : 0.1;
+    let glow_weight = 10 + 6 * sin(frameCount * freq);
+
+    let [r, g, b] = obs.cor;
+    let t = Math.max(0, (50 - d) / 50);
+    if (t > 0) {
+      let m = Math.min(r, g, b);
+      r = int(r - m*t); g = int(g - m*t); b = int(b - m*t);
+    }
+
+    fill(15, 20, 28); stroke(r, g, b, 80); strokeWeight(glow_weight);
+    desenhar_forma(tipo, w, h);
+    noFill(); stroke(r, g, b); strokeWeight(2);
+    desenhar_forma(tipo, w, h);
+    pop();
+  }
+}
+
+function desenhar_nucleo() {
+  push();
+  translate(nucleo.x, nucleo.y);
+  let pulso = sin(frameCount * 0.1) * 8;
+  noStroke();
+  fill(0, 255, 255, 30);  circle(0, 0, nucleo.r*2 + pulso + 30);
+  fill(0, 200, 255, 80);  circle(0, 0, nucleo.r*2 + pulso + 10);
+  fill(255);               circle(0, 0, nucleo.r * 1.5);
+  pop();
+}
+
+// =============================================================================
+// CINEMÁTICA DO BRAÇO
+// =============================================================================
+
+function calcular_cinematica() {
+  let [x0, y0] = braco.origem;
+  let { L1, L2, L3 } = braco;
+  let a1 = braco.theta1;
+  let a2 = braco.theta1 + braco.theta2;
+  let a3 = braco.theta1 + braco.theta2 + braco.theta3;
+
+  let x1 = x0 + L1*cos(a1), y1 = y0 + L1*sin(a1);
+  let x2 = x1 + L2*cos(a2), y2 = y1 + L2*sin(a2);
+  let px = x2 + L3*cos(a3), py = y2 + L3*sin(a3);
+
+  let juntas = [[x0,y0],[x1,y1],[x2,y2],[px,py]];
+  return juntas;
+}
+
+function checar_colisoes_integrais(juntas) {
+  if (estado_jogo !== 'JOGANDO' || frameCount < braco.ultimo_dano + 30) return;
+
+  for (let s = 0; s < 3; s++) {
+    let pi_ = juntas[s], pf = juntas[s+1];
+    let comp = dist(pi_[0], pi_[1], pf[0], pf[1]);
+    let passos = Math.max(8, int(comp / 6));
+
+    for (let step = 0; step <= passos; step++) {
+      let t = step / passos;
+      let bx = pi_[0] + t*(pf[0]-pi_[0]);
+      let by = pi_[1] + t*(pf[1]-pi_[1]);
+
+      if (bx <= 20 || bx >= 630 || by <= 100 || by >= 630) {
+        braco.vida -= 50; braco.ultimo_dano = frameCount;
+        emitir_particulas(bx, by, [180, 80, 255]);
+        if (braco.vida <= 0) { braco.vida = 0; estado_jogo = 'GAME_OVER'; }
+        return;
+      }
+
+      for (let obs of obstaculos) {
+        let { w, h, cx, cy } = obs;
+        let colidiu = false;
+        if (obs.tipo === 'retangulo') {
+          colidiu = cx-w/2 <= bx && bx <= cx+w/2 && cy-h/2 <= by && by <= cy+h/2;
+        } else if (obs.tipo === 'circulo') {
+          colidiu = dist(bx, by, cx, cy) <= w/2;
+        } else if (obs.tipo === 'losango') {
+          colidiu = abs(bx-cx)/(w/2) + abs(by-cy)/(h/2) <= 1;
+        }
+        if (colidiu) {
+          braco.vida -= obs.dano; braco.ultimo_dano = frameCount;
+          emitir_particulas(bx, by, obs.cor);
+          if (braco.vida <= 0) { braco.vida = 0; estado_jogo = 'GAME_OVER'; }
+          return;
+        }
+      }
+    }
+  }
+}
+
+function desenhar_segmento(comprimento, espessura, indice) {
+  stroke(200); strokeWeight(espessura);
+  line(0, 0, comprimento, 0);
+  if (braco.selecionada === indice) { fill(50, 255, 50); stroke(255); }
+  else                               { fill(40); stroke(0, 200, 255); }
+  strokeWeight(Math.max(1, espessura/4));
+  circle(0, 0, espessura * 2.5);
+}
+
+function desenhar_braco() {
+  push();
+  translate(braco.origem[0], braco.origem[1]);
+  rotate(braco.theta1); desenhar_segmento(braco.L1, 12, 0); translate(braco.L1, 0);
+  rotate(braco.theta2); desenhar_segmento(braco.L2,  8, 1); translate(braco.L2, 0);
+  rotate(braco.theta3); desenhar_segmento(braco.L3,  4, 2); translate(braco.L3, 0);
+  pop();
+}
+
+// =============================================================================
+// HUD E TELAS DE FIM
+// =============================================================================
+
+function desenhar_hud() {
+  fill(10, 12, 18); noStroke(); rect(0, 0, 650, 80);
+  stroke(150, 50, 255); strokeWeight(3); line(0, 80, 650, 80);
+
+  fill(0, 255, 255); noStroke(); textSize(12);
+  text("SISTEMA DE MANIPULAÇÃO", 20, 25);
+
+  fill(180, 200, 255); textSize(11);
+  text("Articulação: Mouse / [ ↑ ] / [ ↓ ]", 20, 45);
+  text("Extensão:   [ + ] / [ - ]",            20, 65);
+
+  let nomes_art = ["OMBRO PRIMÁRIO", "COTOVELO", "PULSO / GARRA"];
+  let tamanho_atual = int(braco['L' + (braco.selecionada + 1)]);
+
+  fill(50, 255, 50); textSize(12);
+  text(`MODULO ATIVO: ${nomes_art[braco.selecionada]}`, 220, 35);
+  text(`ALCANCE: ${tamanho_atual}mm`,                    220, 55);
+
+  fill(0, 255, 255); textSize(12);
+  text("INTEGRIDADE DA GARRA", 440, 25);
+
+  fill(50, 10, 10); stroke(255, 50, 50, 100); strokeWeight(2);
+  rect(440, 35, 180, 15);
+  noStroke(); fill(255, 50, 50);
+  rect(440, 35, 1.8 * braco.vida, 15);
+
+  fill(255); textSize(11);
+  text(`STATUS: ${braco.vida}%`, 440, 65);
+}
+
+function desenhar_telas_de_fim() {
+  if (estado_jogo === 'JOGANDO') return;
+  push();
+  translate(width/2, height/2 + 40);
+
+  if (estado_jogo === 'VITORIA') {
+    fill(0, 20, 40, 230); stroke(0, 255, 255); strokeWeight(2);
+    rect(-220, -60, 440, 120);
+    fill(0, 255, 255); textSize(36); textAlign(CENTER, CENTER);
+    text("NÚCLEO EXTRAÍDO", 0, -15);
+    fill(255); textSize(14);
+    text("SISTEMA ONLINE. Pressione [ESPAÇO] para reiniciar.", 0, 30);
+  } else if (estado_jogo === 'GAME_OVER') {
+    fill(40, 0, 0, 230); stroke(255, 50, 50); strokeWeight(2);
+    rect(-220, -60, 440, 120);
+    fill(255, 50, 50); textSize(36); textAlign(CENTER, CENTER);
+    text("FALHA CRÍTICA", 0, -15);
+    fill(255); textSize(14);
+    text("GARRA DESTRUÍDA. Pressione [ESPAÇO] para reiniciar.", 0, 30);
+  }
+
+  textAlign(LEFT, BASELINE);
+  pop();
+}
+
+// =============================================================================
+// LOOP P5.JS
+// =============================================================================
+
+function setup() {
+  createCanvas(650, 650);
+  textFont('monospace');
+  gerar_labirinto();
+}
+
+function draw() {
+  background(10, 12, 18);
+
+  stroke(255, 255, 255, 10); strokeWeight(1);
+  for (let x = 0; x < width;  x += 40) line(x, 80, x, height);
+  for (let y = 80; y < height; y += 40) line(0, y, width, y);
+
+  let velocidade_rot = 0.02;
+  let velocidade_tam = 2.0;
+
+  let em_movimento = keyIsPressed && estado_jogo === 'JOGANDO' &&
+    (keyCode === UP_ARROW || keyCode === DOWN_ARROW ||
+     key === '+' || key === '=' || key === '-' || key === '_');
+
+  if (em_movimento) {
+    let campo_theta = 'theta' + (braco.selecionada + 1);
+    let campo_L     = 'L'     + (braco.selecionada + 1);
+    if      (keyCode === UP_ARROW)          braco[campo_theta] -= velocidade_rot * braco.direcao_rot;
+    else if (keyCode === DOWN_ARROW)        braco[campo_theta] += velocidade_rot * braco.direcao_rot;
+    else if (key === '+' || key === '=')    braco[campo_L] = Math.min(braco[campo_L] + velocidade_tam, 350);
+    else if (key === '-' || key === '_')    braco[campo_L] = Math.max(braco[campo_L] - velocidade_tam, 40);
+  }
+
+  let juntas = calcular_cinematica();
+  let [ponta_x, ponta_y] = juntas[3];
+
+  desenhar_labirinto(juntas);
+  desenhar_nucleo();
+  desenhar_robo();
+  desenhar_braco();
+
+  checar_colisoes_integrais(juntas);
+  atualizar_robo(juntas, em_movimento);
+
+  atualizar_particulas();
+  desenhar_particulas();
+
+  push();
+  translate(ponta_x, ponta_y);
+  fill(255, 20, 0); noStroke(); circle(0, 0, 6);
+  pop();
+
+  if (frameCount < braco.ultimo_dano + 15) {
+    fill(255, 0, 0, 80); noStroke(); rect(0, 80, 650, 570);
+  }
+
+  if (estado_jogo === 'JOGANDO' && dist(ponta_x, ponta_y, nucleo.x, nucleo.y) < nucleo.r) {
+    estado_jogo = 'VITORIA';
+    emitir_particulas_nucleo(nucleo.x, nucleo.y);
+  }
+
+  desenhar_hud();
+  desenhar_telas_de_fim();
+}
+
+function mousePressed() {
+  if (estado_jogo !== 'JOGANDO') return;
+  let juntas = calcular_cinematica();
+  let espessuras = [12, 8, 4];
+  for (let i = 2; i >= 0; i--) {
+    let [px, py] = juntas[i];
+    if (dist(mouseX, mouseY, px, py) <= espessuras[i] * 1.25) {
+      braco.selecionada = i; break;
+    }
+  }
+}
+
+function keyPressed() {
+  if (key === ' ') gerar_labirinto();
+  // impede setas e espaço de rolar a página
+  if (keyCode === UP_ARROW || keyCode === DOWN_ARROW || key === ' ') return false;
+}
+</script>
+</body>
+</html>
