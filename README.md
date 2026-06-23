@@ -1,7 +1,9 @@
 **ROBOTIC ARM**
+
 Você opera um braço robótico articulado preso a uma parede. O objetivo é manobrar a ponta da garra até tocar o núcleo no lado oposto da sala, desviando de obstáculos e de um robô inimigo.
 
 **Controles**
+
 Selecionar articulação:	Clique sobre a junta
 Girar:	↑ / ↓
 Estender / recolher:	+ / -
