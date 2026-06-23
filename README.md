@@ -5,8 +5,11 @@ Você opera um braço robótico articulado preso a uma parede. O objetivo é man
 **Controles**
 
 Selecionar articulação:	Clique sobre a junta
+
 Girar:	↑ / ↓
+
 Estender / recolher:	+ / -
+
 Reiniciar:	Espaço
 
 
@@ -15,8 +18,10 @@ O braço tem três articulações — ombro, cotovelo e pulso — cada uma contr
 **Colisões**
 
 **- Obstáculos e paredes** — reduzem a integridade da garra. Vermelhos causam mais dano que amarelos. Se a integridade chegar a zero: derrota.
+
 **- Robô inimigo** — patrulha o labirinto aleatoriamente. Com a garra parada, ele a evita como qualquer obstáculo. Com a garra em movimento, o contato destrói o braço instantaneamente.
 
 
 **Condição de vitória**
+
 Encostar a ponta da garra no núcleo pulsante.
